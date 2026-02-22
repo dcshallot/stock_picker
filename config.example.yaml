@@ -1,0 +1,61 @@
+run:
+  start_date: 2025-01-01
+  end_date: 2025-12-31
+  timezone: Asia/Shanghai
+  out_dir: outputs
+  cache_dir: data/cache
+
+brokers:
+  futu:
+    host: 127.0.0.1
+    port: 11111
+    unlock_trade_password: ""
+  ibkr_tws:
+    host: 127.0.0.1
+    port: 7497
+    client_id: 101
+    read_only: true
+  ibkr_cp:
+    base_url: https://api.ibkr.com/v1/api
+    account_id: U1234567
+    api_key: "<YOUR_IBKR_CP_API_KEY>"
+
+universe:
+  watchlist_path: data/input/watchlist.csv
+  rules_path: data/input/universe_rules.yaml
+  prefer_watchlist: true
+
+data:
+  timeframe: 1D
+  adjustment: forward
+  max_missing_ratio: 0.1
+  rate_limit:
+    requests_per_second: 5
+    backoff_seconds: [1, 2, 5]
+
+models:
+  prophet:
+    enable: false
+    params:
+      seasonality_mode: multiplicative
+      changepoint_prior_scale: 0.05
+
+selection:
+  hard_filters:
+    market_whitelist: [US, HK, EU, CN]
+    min_close: 5
+    min_volume: 100000
+    max_volatility_3: 0.2
+    min_forecast_return_5d: -0.05
+  score_weights:
+    forecast_return_5d: 0.5
+    ret_1d: 0.2
+    volume: 0.2
+    volatility_3: 0.1
+  constraints:
+    max_per_market:
+      US: 5
+      HK: 3
+      EU: 2
+      CN: 3
+    currency_allowlist: [USD, HKD, EUR, CNY]

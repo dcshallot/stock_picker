@@ -1,0 +1,115 @@
+"""Markdown report rendering.
+
+This module generates user-facing run reports from pipeline artifacts.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+
+def _format_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    if isinstance(value, pd.Timestamp):
+        if value.tzinfo is None:
+            value = value.tz_localize("UTC")
+        return value.tz_convert("UTC").isoformat()
+    text = str(value)
+    return text
+
+
+def _markdown_table(df: pd.DataFrame, columns: list[str]) -> str:
+    if df.empty:
+        return "No candidates available."
+
+    available_cols = [c for c in columns if c in df.columns]
+    if not available_cols:
+        return "No display columns available."
+
+    header = "| " + " | ".join(available_cols) + " |"
+    separator = "| " + " | ".join(["---"] * len(available_cols)) + " |"
+
+    rows = [header, separator]
+    for _, row in df[available_cols].iterrows():
+        cells = [_format_cell(row[col]) for col in available_cols]
+        rows.append("| " + " | ".join(cells) + " |")
+    return "\n".join(rows)
+
+
+def render_portfolio_markdown(
+    run_summary: dict[str, Any],
+    candidates_df: pd.DataFrame,
+    diagnostics: dict[str, Any],
+) -> str:
+    """Render markdown report for one run."""
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    top_df = candidates_df.head(20)
+    table = _markdown_table(
+        top_df,
+        columns=[
+            "rank",
+            "symbol",
+            "market",
+            "currency",
+            "score",
+            "forecast_return_5d",
+            "ret_1d",
+            "close",
+            "volume",
+        ],
+    )
+
+    quality = diagnostics.get("quality", {})
+    fetch = diagnostics.get("fetch", {})
+
+    diagnostics_lines = [
+        f"- quality.total_rows: {quality.get('total_rows', 0)}",
+        f"- quality.flagged_rows: {quality.get('flagged_rows', 0)}",
+        f"- quality.missing_ratio: {quality.get('missing_ratio', 0):.4f}",
+        f"- quality.delayed_markers: {quality.get('delayed_markers', 0)}",
+        f"- fetch.permission_denied: {len(fetch.get('permission_denied', []))}",
+        f"- fetch.rate_limited: {len(fetch.get('rate_limited', []))}",
+        f"- fetch.not_supported: {len(fetch.get('not_supported', []))}",
+    ]
+
+    lines = [
+        "# Portfolio Candidates",
+        "",
+        "## Run Summary",
+        f"- run_id: {run_summary.get('run_id', '')}",
+        f"- generated_at_utc: {generated_at}",
+        f"- output_timezone: {run_summary.get('output_timezone', 'UTC')} (placeholder)",
+        f"- brokers: {', '.join(run_summary.get('brokers', []))}",
+        f"- universe_source: {run_summary.get('universe_source', 'unknown')}",
+        f"- universe_size: {run_summary.get('universe_size', 0)}",
+        f"- bars_rows: {run_summary.get('bars_rows', 0)}",
+        f"- quotes_rows: {run_summary.get('quotes_rows', 0)}",
+        f"- features_rows: {run_summary.get('features_rows', 0)}",
+        f"- candidates_rows: {run_summary.get('candidates_rows', 0)}",
+        "",
+        "## Top Candidates",
+        table,
+        "",
+        "## Diagnostics",
+        *diagnostics_lines,
+        "",
+    ]
+
+    return "\n".join(lines)
+
+
+def write_markdown_report(path: str | Path, content: str) -> Path:
+    """Write markdown content to disk."""
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return target

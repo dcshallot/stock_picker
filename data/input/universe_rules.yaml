@@ -1,0 +1,21 @@
+market_whitelist:
+  - US
+  - HK
+  - EU
+  - CN
+
+min_liquidity:
+  avg_daily_turnover: 10000000
+  avg_daily_volume: 100000
+
+price_range:
+  min: 5
+  max: 2000
+
+exclude_tags:
+  - suspended
+  - st
+
+preferred_tags:
+  - large_cap
+  - liquid
