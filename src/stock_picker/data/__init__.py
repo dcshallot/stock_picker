@@ -1,1 +1,1 @@
-"""Data layer modules for fetch/normalize/cache/quality."""
+"""Data layer modules for sync/fetch/normalize/store/quality."""

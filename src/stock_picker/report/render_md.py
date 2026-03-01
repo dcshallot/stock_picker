@@ -69,6 +69,7 @@ def render_portfolio_markdown(
 
     quality = diagnostics.get("quality", {})
     fetch = diagnostics.get("fetch", {})
+    provider_limits = diagnostics.get("provider_limits", {})
 
     diagnostics_lines = [
         f"- quality.total_rows: {quality.get('total_rows', 0)}",
@@ -79,6 +80,26 @@ def render_portfolio_markdown(
         f"- fetch.rate_limited: {len(fetch.get('rate_limited', []))}",
         f"- fetch.not_supported: {len(fetch.get('not_supported', []))}",
     ]
+
+    provider_limit_lines = ["- provider_limits: none"]
+    futu_limits = provider_limits.get("futu", {}).get("history_kline_quota", {})
+    if futu_limits:
+        provider_limit_lines = [
+            f"- futu.history_kline_quota.status: {futu_limits.get('status', 'unknown')}",
+            f"- futu.history_kline_quota.used_quota: {futu_limits.get('used_quota', 0)}",
+            f"- futu.history_kline_quota.remain_quota: {futu_limits.get('remain_quota', 0)}",
+            f"- futu.history_kline_quota.detail_count: {futu_limits.get('detail_count', 0)}",
+            "- futu.history_kline_quota.configured_quota_budget_30d: "
+            f"{futu_limits.get('configured_quota_budget_30d', 0)}",
+            "- futu.history_kline_quota.configured_warn_remaining_below: "
+            f"{futu_limits.get('configured_warn_remaining_below', 0)}",
+            "- futu.history_kline_quota.estimated_new_quota_symbols: "
+            f"{futu_limits.get('estimated_new_quota_symbols', 0)}",
+        ]
+        warnings = futu_limits.get("warnings", [])
+        if warnings:
+            for warning in warnings:
+                provider_limit_lines.append(f"- futu.history_kline_quota.warning: {warning}")
 
     lines = [
         "# Portfolio Candidates",
@@ -100,6 +121,9 @@ def render_portfolio_markdown(
         "",
         "## Diagnostics",
         *diagnostics_lines,
+        "",
+        "## Provider Limits",
+        *provider_limit_lines,
         "",
     ]
 

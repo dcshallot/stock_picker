@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from stock_picker.brokers.base import BrokerCapabilities, BrokerConnector
+from stock_picker.brokers.base import BrokerCapabilities, BrokerConnector, BrokerDataRequest
 
 
 class IbkrTwsConnector(BrokerConnector):
@@ -42,10 +42,11 @@ class IbkrTwsConnector(BrokerConnector):
             }
         return mapping
 
-    def fetch_bars(self, request: dict[str, Any]) -> pd.DataFrame:
-        universe_df: pd.DataFrame = request.get("universe", pd.DataFrame())
+    def fetch_bars(self, request: BrokerDataRequest) -> pd.DataFrame:
+        universe_df = pd.DataFrame(request.universe)
         rows: list[dict[str, Any]] = []
         now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        timeframe = request.timeframe or "1D"
 
         for i, row in universe_df.reset_index(drop=True).iterrows():
             base = 90 + i * 4
@@ -57,7 +58,7 @@ class IbkrTwsConnector(BrokerConnector):
                         "symbol": row["symbol"],
                         "market": row.get("market", "UNKNOWN"),
                         "currency": row.get("currency", "USD"),
-                        "timeframe": "1D",
+                        "timeframe": timeframe,
                         "open": base + d,
                         "high": base + d + 1,
                         "low": base + d - 1,
@@ -69,8 +70,8 @@ class IbkrTwsConnector(BrokerConnector):
 
         return pd.DataFrame(rows)
 
-    def fetch_quotes(self, request: dict[str, Any]) -> pd.DataFrame:
-        universe_df: pd.DataFrame = request.get("universe", pd.DataFrame())
+    def fetch_quotes(self, request: BrokerDataRequest) -> pd.DataFrame:
+        universe_df = pd.DataFrame(request.universe)
         rows: list[dict[str, Any]] = []
         now = datetime.now(timezone.utc).isoformat()
 

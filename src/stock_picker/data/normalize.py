@@ -19,11 +19,13 @@ BARS_SCHEMA_COLUMNS = [
     "market",
     "currency",
     "timeframe",
+    "adjustment",
     "open",
     "high",
     "low",
     "close",
     "volume",
+    "turnover",
     "source",
     "quality_flags",
 ]
@@ -75,8 +77,13 @@ def normalize_bars(
     out["market"] = _series_or_default(df, "market", "UNKNOWN").astype(str)
     out["currency"] = _series_or_default(df, "currency", "UNKNOWN").astype(str)
     out["timeframe"] = _series_or_default(df, "timeframe", "1D").astype(str)
+    out["adjustment"] = _series_or_default(df, "adjustment", "forward").astype(str)
+    daily_mask = out["timeframe"].str.upper() == "1D"
+    if daily_mask.any():
+        out.loc[daily_mask, "ts_utc"] = out.loc[daily_mask, "ts_utc"].dt.normalize()
+        out = out.loc[~(daily_mask & (out["ts_utc"].dt.dayofweek >= 5))].copy()
 
-    for col in ["open", "high", "low", "close", "volume"]:
+    for col in ["open", "high", "low", "close", "volume", "turnover"]:
         out[col] = pd.to_numeric(df.get(col), errors="coerce")
 
     source_series = df.get("source")

@@ -10,6 +10,7 @@ import pandas as pd
 from stock_picker.brokers.base import (
     BrokerCapabilities,
     BrokerConnector,
+    BrokerDataRequest,
     NotSupported,
     PermissionDenied,
 )
@@ -49,13 +50,13 @@ class IbkrCpConnector(BrokerConnector):
         if not api_key or api_key.startswith("<"):
             raise PermissionDenied("IBKR CP api_key is missing. Set a real key in config.")
 
-    def fetch_bars(self, request: dict[str, Any]) -> pd.DataFrame:
+    def fetch_bars(self, request: BrokerDataRequest) -> pd.DataFrame:
         raise NotSupported("IBKR CP bar endpoint is not implemented in this scaffold.")
 
-    def fetch_quotes(self, request: dict[str, Any]) -> pd.DataFrame:
+    def fetch_quotes(self, request: BrokerDataRequest) -> pd.DataFrame:
         self._assert_api_key()
 
-        universe_df: pd.DataFrame = request.get("universe", pd.DataFrame())
+        universe_df = pd.DataFrame(request.universe)
         now = datetime.now(timezone.utc).isoformat()
         rows: list[dict[str, Any]] = []
         for i, row in universe_df.reset_index(drop=True).iterrows():

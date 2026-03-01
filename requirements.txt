@@ -3,3 +3,4 @@ pyarrow
 pydantic
 pyyaml
 rich
+yfinance

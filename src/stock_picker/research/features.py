@@ -18,6 +18,7 @@ def build_features(bars_df: pd.DataFrame) -> pd.DataFrame:
         "ts_utc",
         "close",
         "volume",
+        "turnover",
         "ret_1d",
         "sma_3_gap",
         "volatility_3",

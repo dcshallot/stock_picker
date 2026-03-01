@@ -1,37 +1,119 @@
 run:
-  start_date: 2025-01-01
-  end_date: 2025-12-31
+  start_date: 2026-02-22
+  end_date: 2026-03-01
   timezone: Asia/Shanghai
   out_dir: outputs
-  cache_dir: data/cache
-
-brokers:
-  futu:
-    host: 127.0.0.1
-    port: 11111
-    unlock_trade_password: ""
-  ibkr_tws:
-    host: 127.0.0.1
-    port: 7497
-    client_id: 101
-    read_only: true
-  ibkr_cp:
-    base_url: https://api.ibkr.com/v1/api
-    account_id: U1234567
-    api_key: "<YOUR_IBKR_CP_API_KEY>"
+  mode: smoke_test
 
 universe:
   watchlist_path: data/input/watchlist.csv
   rules_path: data/input/universe_rules.yaml
   prefer_watchlist: true
 
+routing:
+  history_bars:
+    HK: [futu, yahoo]
+    US: [yahoo]
+    CN: [yahoo]
+    EU: [yahoo]
+  quotes:
+    HK: []
+    US: [us_primary]
+    CN: [cn_primary]
+    EU: [eu_primary]
+  fundamentals:
+    HK: []
+    US: [us_primary]
+    CN: [cn_primary]
+    EU: []
+
+providers:
+  futu:
+    kind: futu
+    enabled: true
+    host: 127.0.0.1
+    port: 11112
+    websocket_port: 33333
+    websocket_key: ""
+    unlock_trade_password: ""
+    allowed_markets: [HK]
+    datasets: [history_bars]
+    enable_quotes: false
+    history_kline:
+      timeframe_allowlist: [1D]
+      adjustment: forward
+      max_count_per_request: 1000
+      quota_budget_30d: 1000
+      warn_remaining_below: 100
+      check_quota_before_run: true
+
+  yahoo:
+    kind: yahoo
+    enabled: true
+    allowed_markets: [US, HK, CN, EU]
+    datasets: [history_bars]
+    timeout_seconds: 20
+    max_retries: 3
+    repair_window_days: 30
+    batch_size: 1
+
+  us_primary:
+    kind: rest_api
+    enabled: false
+    base_url: https://api.example.com/us
+    api_key: ""
+    allowed_markets: [US]
+    datasets: [history_bars, quotes, fundamentals]
+    rate_limit:
+      requests_per_minute: 60
+      backoff_seconds: [1, 2, 5]
+
+  us_backup:
+    kind: file_or_rest
+    enabled: false
+    base_url: ""
+    api_key: ""
+    allowed_markets: [US]
+    datasets: [history_bars]
+
+  cn_primary:
+    kind: rest_api
+    enabled: false
+    base_url: https://api.example.com/cn
+    api_key: ""
+    allowed_markets: [CN]
+    datasets: [history_bars, quotes]
+
+  cn_backup:
+    kind: csv_or_parquet
+    enabled: false
+    root_dir: data/input/cn_cache
+    allowed_markets: [CN]
+    datasets: [history_bars]
+
+  eu_primary:
+    kind: rest_api
+    enabled: false
+    base_url: https://api.example.com/eu
+    api_key: ""
+    allowed_markets: [EU]
+    datasets: [history_bars]
+
 data:
-  timeframe: 1D
-  adjustment: forward
-  max_missing_ratio: 0.1
-  rate_limit:
-    requests_per_second: 5
-    backoff_seconds: [1, 2, 5]
+  history_bars:
+    timeframe: 1D
+    adjustment: forward
+    include_turnover: true
+    store_dir: data/history_store
+    bootstrap_start_date: 2018-01-01
+    repair_window_days: 30
+    max_gap_days_before_full_resync: 365
+  quotes:
+    enabled: false
+  quality:
+    max_missing_ratio: 0.1
+    fail_on_empty_primary: false
+    require_min_success_symbols: 1
 
 models:
   prophet:
@@ -41,8 +123,9 @@ models:
       changepoint_prior_scale: 0.05
 
 selection:
+  enabled: true
   hard_filters:
-    market_whitelist: [US, HK, EU, CN]
+    market_whitelist: [HK]
     min_close: 5
     min_volume: 100000
     max_volatility_3: 0.2
@@ -54,8 +137,5 @@ selection:
     volatility_3: 0.1
   constraints:
     max_per_market:
-      US: 5
-      HK: 3
-      EU: 2
-      CN: 3
-    currency_allowlist: [USD, HKD, EUR, CNY]
+      HK: 10
+    currency_allowlist: [HKD]

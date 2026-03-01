@@ -15,6 +15,42 @@ from pydantic import ValidationError
 from stock_picker.config.schema import AppConfig
 
 
+def _upgrade_legacy_config(raw: dict) -> dict:
+    """Upgrade older config shapes to the current schema."""
+
+    data = dict(raw)
+
+    if "providers" not in data and "brokers" in data:
+        brokers = data.get("brokers") or {}
+        data["providers"] = {
+            "futu": brokers.get("futu", {}),
+            "ibkr_tws": brokers.get("ibkr_tws", {}),
+            "ibkr_cp": brokers.get("ibkr_cp", {}),
+        }
+
+    flat_data = data.get("data")
+    if isinstance(flat_data, dict) and any(
+        key in flat_data for key in ("timeframe", "adjustment", "max_missing_ratio")
+    ):
+        data["data"] = {
+            "history_bars": {
+                "timeframe": flat_data.get("timeframe", "1D"),
+                "adjustment": flat_data.get("adjustment", "forward"),
+                "include_turnover": True,
+            },
+            "quotes": {
+                "enabled": bool(flat_data.get("quotes_enabled", False)),
+            },
+            "quality": {
+                "max_missing_ratio": flat_data.get("max_missing_ratio", 0.1),
+                "fail_on_empty_primary": False,
+                "require_min_success_symbols": 1,
+            },
+        }
+
+    return data
+
+
 def load_config(path: str | Path) -> AppConfig:
     """Load and validate pipeline config from YAML.
 
@@ -31,6 +67,7 @@ def load_config(path: str | Path) -> AppConfig:
         )
 
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = _upgrade_legacy_config(raw)
     try:
         return AppConfig.model_validate(raw)
     except ValidationError as exc:
