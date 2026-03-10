@@ -14,6 +14,7 @@ from stock_picker.config.schema import AppConfig
 from stock_picker.data.historical_store import HistoricalStore
 from stock_picker.data.normalize import BARS_SCHEMA_COLUMNS, normalize_bars
 from stock_picker.data.router import resolve_provider_assignments
+from stock_picker.report.render_md import render_portfolio_markdown
 from stock_picker.universe.load_watchlist import load_symbols, load_watchlist
 
 
@@ -196,3 +197,56 @@ def test_load_config_upgrades_legacy_brokers_and_flat_data(tmp_path):
     assert config.data.history_bars.timeframe == "1D"
     assert config.data.history_bars.bootstrap_start_date == date(2018, 1, 1)
     assert config.data.quality.max_missing_ratio == 0.25
+
+
+def test_render_report_includes_bar_date_range_fields():
+    run_summary = {
+        "run_id": "run_test",
+        "output_timezone": "UTC",
+        "brokers": ["yahoo"],
+        "universe_source": "watchlist",
+        "universe_size": 1,
+        "bars_rows": 5,
+        "min_date": "2026-02-24",
+        "max_date": "2026-03-01",
+        "bars_max_date_lag_trading_days": 2,
+        "quotes_rows": 0,
+        "features_rows": 1,
+        "candidates_rows": 1,
+    }
+    candidates_df = pd.DataFrame(
+        [
+            {
+                "rank": 1,
+                "symbol": "AAPL",
+                "market": "US",
+                "currency": "USD",
+                "score": 1.0,
+                "forecast_return_5d": 0.0,
+                "ret_1d": 0.01,
+                "close": 100.0,
+                "volume": 1000,
+            }
+        ]
+    )
+    diagnostics = {
+        "quality": {},
+        "fetch": {},
+        "provider_limits": {},
+        "universe_filter": {
+            "status": "ok",
+            "source": "futu_filter",
+            "name": "hk_ma7_30_50",
+            "market": "HK",
+            "plate_code": "",
+            "results_count": 2,
+            "universe_rows": 2,
+        },
+    }
+
+    md = render_portfolio_markdown(run_summary, candidates_df, diagnostics)
+
+    assert "- min_date: 2026-02-24" in md
+    assert "- max_date: 2026-03-01" in md
+    assert "- bars_max_date_lag_trading_days: 2" in md
+    assert "## Universe Filter Summary" in md

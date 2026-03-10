@@ -1,0 +1,27 @@
+{
+  "name": "hk_ma7_30_50",
+  "market": "HK",
+  "plate_code": "",
+  "filters": [
+    {
+      "type": "custom_indicator",
+      "stock_field1": "MA",
+      "stock_field1_para": [7],
+      "stock_field2": "VALUE",
+      "relative_position": "MORE",
+      "value": 30,
+      "ktype": "K_DAY",
+      "is_no_filter": false
+    },
+    {
+      "type": "custom_indicator",
+      "stock_field1": "MA",
+      "stock_field1_para": [7],
+      "stock_field2": "VALUE",
+      "relative_position": "LESS",
+      "value": 50,
+      "ktype": "K_DAY",
+      "is_no_filter": false
+    }
+  ]
+}

@@ -70,6 +70,7 @@ def render_portfolio_markdown(
     quality = diagnostics.get("quality", {})
     fetch = diagnostics.get("fetch", {})
     provider_limits = diagnostics.get("provider_limits", {})
+    universe_filter = diagnostics.get("universe_filter", {})
 
     diagnostics_lines = [
         f"- quality.total_rows: {quality.get('total_rows', 0)}",
@@ -112,9 +113,32 @@ def render_portfolio_markdown(
         f"- universe_source: {run_summary.get('universe_source', 'unknown')}",
         f"- universe_size: {run_summary.get('universe_size', 0)}",
         f"- bars_rows: {run_summary.get('bars_rows', 0)}",
+        f"- min_date: {run_summary.get('min_date', '')}",
+        f"- max_date: {run_summary.get('max_date', '')}",
+        "- bars_max_date_lag_trading_days: "
+        f"{run_summary.get('bars_max_date_lag_trading_days', '')}",
         f"- quotes_rows: {run_summary.get('quotes_rows', 0)}",
         f"- features_rows: {run_summary.get('features_rows', 0)}",
         f"- candidates_rows: {run_summary.get('candidates_rows', 0)}",
+    ]
+
+    if universe_filter:
+        lines.extend(
+            [
+                "",
+                "## Universe Filter Summary",
+                f"- status: {universe_filter.get('status', 'unknown')}",
+                f"- source: {universe_filter.get('source', '')}",
+                f"- name: {universe_filter.get('name', '')}",
+                f"- market: {universe_filter.get('market', '')}",
+                f"- plate_code: {universe_filter.get('plate_code', '')}",
+                f"- results_count: {universe_filter.get('results_count', 0)}",
+                f"- universe_rows: {universe_filter.get('universe_rows', 0)}",
+            ]
+        )
+
+    lines.extend(
+        [
         "",
         "## Top Candidates",
         table,
@@ -125,7 +149,8 @@ def render_portfolio_markdown(
         "## Provider Limits",
         *provider_limit_lines,
         "",
-    ]
+        ]
+    )
 
     return "\n".join(lines)
 

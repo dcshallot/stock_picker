@@ -3,7 +3,7 @@
 ## 1. 项目简介
 `stock_picker` 是一个一次性运行的选股管线骨架：
 
-1. 从不同数据源/交易接口读取股票数据（当前支持 Futu + Yahoo 的日线历史数据）
+1. 先构建股票池（支持 Futu 服务端条件选股 / watchlist / rules），再从数据源读取历史数据
 2. 统一数据格式（bars / quotes / universe / features / candidates）
 3. 进行特征工程与可选模型（Prophet 可选，未安装时自动降级）
 4. 执行规则筛选 + 打分排序
@@ -13,6 +13,7 @@
 
 - 可运行的工程骨架
 - `providers + routing` 配置结构
+- `universe.mode=futu_filter`（默认）+ 外置 JSON 条件选股
 - Futu OpenD 的真实港股历史 K 线读取,以及API阈值告警
 - 新增基于 `Parquet` 的符号级历史仓库和增量同步
 - 接入 Yahoo Finance 作为首个免费日线 provider（安装 `yfinance` 时走真实拉取，未安装时回退 stub）
@@ -55,24 +56,23 @@ source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-2. dry-run（只看执行计划）：
+2. dry-run（只看执行计划，默认走 `futu_filter`）：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run \
   --config config.example.yaml \
-  --watchlist data/input/watchlist.csv \
   --provider futu \
   --dry-run
 ```
 
-3. 运行当前推荐路径（Futu 港股或 Yahoo 美股日线）：
+3. 运行当前推荐路径（先筛池，再拉历史）：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run \
   --config config.example.yaml \
-  --watchlist data/input/watchlist.csv \
+  --universe-mode futu_filter \
+  --filter-spec data/input/futu_filter_spec.json \
   --provider futu \
-  --allowed-market HK \
   --bars-only \
   --force-refresh
 ```
@@ -96,6 +96,10 @@ PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run \
 - `--watchlist <path>`：覆盖配置中的 `universe.watchlist_path`。
 - `--symbol <spec>`：直接传入股票代码，可重复。格式如 `US.AAPL`、`HK.00700:HKD`；优先级高于 watchlist/rules。
 - `--rules <path>`：覆盖配置中的 `universe.rules_path`。
+- `--universe-mode watchlist|rules|futu_filter`：覆盖 `universe.mode`。
+- `--filter-spec <path>`：覆盖 `universe.filter_spec_path`。
+- `--filter-market <market>`：覆盖 `universe.filter_market`。
+- `--filter-plate-code <code>`：覆盖 `universe.filter_plate_code`。
 - `--provider <name>`：显式指定 provider，可重复。示例：`futu`、`yahoo`。
 - `--broker futu|ibkr_tws|ibkr_cp`：旧参数，作为 `--provider` 的兼容别名保留。
 - `--allowed-market <market>`：限制本次运行只处理指定市场，可重复。示例：`HK`。
@@ -124,8 +128,14 @@ run:
   mode: smoke_test
 
 universe:
+  mode: futu_filter
   watchlist_path: data/input/watchlist.csv
   rules_path: data/input/universe_rules.yaml
+  filter_spec_path: data/input/futu_filter_spec.json
+  filter_market: HK
+  filter_plate_code:
+  filter_page_size: 200
+  max_filter_pages: 200
   prefer_watchlist: true
 
 routing:
@@ -180,6 +190,8 @@ selection:
 说明：
 
 - `routing` 控制“某个市场的某类数据”由哪个 provider 负责。
+- `universe.mode` 控制股票池来源，默认 `futu_filter`。
+- `universe.filter_spec_path` 指向外置 JSON 条件文件（示例：`data/input/futu_filter_spec.json`）。
 - `providers` 描述每个数据源的连接参数、市场边界和可提供的数据集。
 - 当前 `FutuConnector` 的真实读取路径使用 OpenD API 端口（`host` + `port`）。
 - `Yahoo` provider 依赖 `yfinance`；当前已写入 `requirements.txt`。
@@ -206,6 +218,9 @@ selection:
 - `bar_data_summary.csv`：每只股票最新一根 K 线的基础行情摘要（若有数据）。
   这是“每个股票 1 条”的摘要，不是整段时间窗口的全量日线。
 - `portfolio_candidates.md`：Markdown 报告（run summary + top candidates + diagnostics）。
+- `filter_request.json`：本次服务端筛股请求快照（仅 `futu_filter` 模式）。
+- `filter_results.csv`：服务端筛股返回股票列表（仅 `futu_filter` 模式）。
+- `filter_meta.json`：筛股分页/耗时/数量等元数据（仅 `futu_filter` 模式）。
 
 缓存约定：
 
@@ -255,16 +270,16 @@ src/stock_picker/
 
 ## 10. 最小运行命令（检查）
 
-dry-run：
+dry-run（默认 `futu_filter`）：
 
 ```bash
-PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run --config config.example.yaml --watchlist data/input/watchlist.csv --provider futu --out outputs --dry-run
+PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run --config config.example.yaml --provider futu --out outputs --dry-run
 ```
 
 非 dry-run：
 
 ```bash
-PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run --config config.example.yaml --watchlist data/input/watchlist.csv --provider futu --out outputs
+PYTHONPATH=src ./.venv/bin/python -m stock_picker.cli.run --config config.example.yaml --provider futu --out outputs
 ```
 
 直接指定股票代码：

@@ -6,8 +6,14 @@ run:
   mode: smoke_test
 
 universe:
+  mode: futu_filter
   watchlist_path: data/input/watchlist.csv
   rules_path: data/input/universe_rules.yaml
+  filter_spec_path: data/input/futu_filter_spec.json
+  filter_market: HK
+  filter_plate_code:
+  filter_page_size: 200
+  max_filter_pages: 200
   prefer_watchlist: true
 
 routing:

@@ -20,7 +20,7 @@ import logging
 import platform
 import shutil
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,7 @@ from stock_picker.research.models.prophet import run_prophet
 from stock_picker.research.selection.rules import apply_hard_filters
 from stock_picker.research.selection.scorer import score_and_rank
 from stock_picker.universe.load_watchlist import load_symbols, load_watchlist
+from stock_picker.universe.futu_filter_loader import load_from_futu_filter
 from stock_picker.universe.rule_screener import screen_universe_from_rules
 
 LOGGER = logging.getLogger("stock_picker")
@@ -67,6 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit symbol spec, repeatable. Format: US.AAPL or HK.00700:HKD",
     )
     parser.add_argument("--rules", help="Override rules path")
+    parser.add_argument(
+        "--universe-mode",
+        choices=["watchlist", "rules", "futu_filter"],
+        help="Universe source mode. Default comes from config.",
+    )
+    parser.add_argument("--filter-spec", help="Override futu filter JSON spec path")
+    parser.add_argument("--filter-market", help="Override futu filter market, e.g. HK")
+    parser.add_argument("--filter-plate-code", help="Override futu filter plate code")
     parser.add_argument(
         "--provider",
         action="append",
@@ -128,20 +137,44 @@ def _collect_env() -> dict[str, Any]:
     }
 
 
-def _build_universe(config: Any, cli_symbols: list[str] | None = None) -> tuple[pd.DataFrame, str]:
+def _build_universe(
+    config: Any,
+    cli_symbols: list[str] | None = None,
+    futu_connector: FutuConnector | None = None,
+) -> tuple[pd.DataFrame, str, dict[str, Any], pd.DataFrame, dict[str, Any]]:
     if cli_symbols:
-        return load_symbols(cli_symbols), "cli_symbols"
+        return load_symbols(cli_symbols), "cli_symbols", {}, pd.DataFrame(), {}
 
+    mode = str(getattr(config.universe, "mode", "") or "").strip().lower()
     watchlist_path = config.universe.watchlist_path
     rules_path = config.universe.rules_path
 
+    if mode == "futu_filter":
+        if futu_connector is None:
+            raise ValueError("universe.mode=futu_filter requires futu connector configuration.")
+        universe_df, filter_diag, raw_filter_df, request_payload = load_from_futu_filter(
+            config,
+            futu_connector,
+        )
+        return universe_df, "futu_filter", filter_diag, raw_filter_df, request_payload
+
+    if mode == "watchlist":
+        if watchlist_path:
+            return load_watchlist(watchlist_path), "watchlist", {}, pd.DataFrame(), {}
+        raise ValueError("universe.mode=watchlist requires universe.watchlist_path")
+
+    if mode == "rules":
+        if rules_path:
+            return screen_universe_from_rules(rules_path), "rules", {}, pd.DataFrame(), {}
+        raise ValueError("universe.mode=rules requires universe.rules_path")
+
     if watchlist_path:
-        return load_watchlist(watchlist_path), "watchlist"
+        return load_watchlist(watchlist_path), "watchlist", {}, pd.DataFrame(), {}
     if rules_path:
-        return screen_universe_from_rules(rules_path), "rules"
+        return screen_universe_from_rules(rules_path), "rules", {}, pd.DataFrame(), {}
 
     raise ValueError(
-        "No universe source configured. Please set `universe.watchlist_path` or `universe.rules_path`."
+        "No universe source configured. Please set universe.mode and corresponding paths."
     )
 
 
@@ -256,6 +289,44 @@ def _build_passthrough_candidates(features_df: pd.DataFrame) -> pd.DataFrame:
     out = out.sort_values(["market", "symbol"]).reset_index(drop=True)
     out["rank"] = range(1, len(out) + 1)
     return out
+
+
+def _bars_date_range_utc(bars_df: pd.DataFrame) -> tuple[str, str]:
+    """Return min/max UTC dates (YYYY-MM-DD) for bars_df.ts_utc."""
+
+    if bars_df.empty or "ts_utc" not in bars_df.columns:
+        return "", ""
+
+    ts = pd.to_datetime(bars_df["ts_utc"], utc=True, errors="coerce").dropna()
+    if ts.empty:
+        return "", ""
+
+    return ts.min().date().isoformat(), ts.max().date().isoformat()
+
+
+def _bars_max_date_lag_trading_days(
+    bars_df: pd.DataFrame,
+    *,
+    reference_date: date | None = None,
+) -> int | None:
+    """Trading-day lag between bars max date and reference date."""
+
+    if bars_df.empty or "ts_utc" not in bars_df.columns:
+        return None
+
+    ts = pd.to_datetime(bars_df["ts_utc"], utc=True, errors="coerce").dropna()
+    if ts.empty:
+        return None
+
+    max_date = ts.max().date()
+    ref = reference_date or datetime.now(timezone.utc).date()
+    if max_date >= ref:
+        return 0
+
+    start = max_date + timedelta(days=1)
+    if start > ref:
+        return 0
+    return int(len(pd.bdate_range(start=start, end=ref, inclusive="both")))
 
 
 def _empty_fetch_diagnostics() -> dict[str, Any]:
@@ -450,11 +521,13 @@ def _dry_run_print(
     routed_universe_df: pd.DataFrame,
     routing_diagnostics: dict[str, Any],
     out_dir: Path,
+    universe_source: str,
 ) -> None:
     CONSOLE.print("[bold]Dry-run plan[/bold]")
     CONSOLE.print(f"- Output root: {out_dir}")
     CONSOLE.print(f"- Providers: {', '.join(provider_names) if provider_names else '(none)'}")
     CONSOLE.print(f"- Universe rows: {len(universe_df)}")
+    CONSOLE.print(f"- Universe source: {universe_source}")
     CONSOLE.print(f"- Routed rows: {len(routed_universe_df)}")
     CONSOLE.print(
         f"- Skipped by routing: {len(routing_diagnostics.get('skipped_symbols', []))}"
@@ -476,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
 
     diagnostics: dict[str, Any] = {
         "pipeline_steps": [],
+        "universe_filter": {},
         "routing": {},
         "provider_limits": {},
         "capabilities": {},
@@ -496,12 +570,37 @@ def main(argv: list[str] | None = None) -> int:
             config,
             watchlist_path=args.watchlist,
             rules_path=args.rules,
+            universe_mode=args.universe_mode,
+            filter_spec_path=args.filter_spec,
+            filter_market=args.filter_market,
+            filter_plate_code=args.filter_plate_code,
             start_date=start_date,
             end_date=end_date,
             out_dir=args.out,
         )
 
-        universe_df, universe_source = _build_universe(config, cli_symbols=args.symbol)
+        futu_filter_connector: FutuConnector | None = None
+        if str(config.universe.mode).strip().lower() == "futu_filter":
+            futu_cfg = config.get_provider_config("futu")
+            if futu_cfg is None:
+                raise ValueError("universe.mode=futu_filter requires providers.futu config.")
+            futu_filter_connector = FutuConnector(futu_cfg.model_dump())
+
+        try:
+            universe_df, universe_source, universe_filter_diag, filter_results_df, filter_request_payload = _build_universe(
+                config,
+                cli_symbols=args.symbol,
+                futu_connector=futu_filter_connector,
+            )
+        except Exception as exc:  # noqa: BLE001
+            diagnostics["universe_filter"] = {
+                "status": "error",
+                "source": "futu_filter",
+                "error_type": exc.__class__.__name__,
+                "error_message": str(exc),
+            }
+            raise ValueError(f"Failed to build universe: {exc}") from exc
+        diagnostics["universe_filter"] = universe_filter_diag
         diagnostics["pipeline_steps"].append("2_build_universe")
 
         selected_provider_names = _selected_provider_names(args)
@@ -566,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
             routed_universe_df,
             routing_diagnostics,
             out_root,
+            universe_source,
         )
         return 0
 
@@ -657,6 +757,11 @@ def main(argv: list[str] | None = None) -> int:
 
     diagnostics["selection"]["candidate_rows"] = int(len(candidates_df))
 
+    min_date, max_date = _bars_date_range_utc(bars_df)
+    bars_lag_trading_days = _bars_max_date_lag_trading_days(
+        bars_df,
+        reference_date=config.run.end_date or datetime.now(timezone.utc).date(),
+    )
     run_summary = {
         "run_id": run_id,
         "output_timezone": config.run.timezone,
@@ -666,6 +771,9 @@ def main(argv: list[str] | None = None) -> int:
         "universe_size": int(len(universe_df)),
         "routed_universe_size": int(len(routed_universe_df)),
         "bars_rows": int(len(bars_df)),
+        "min_date": min_date,
+        "max_date": max_date,
+        "bars_max_date_lag_trading_days": bars_lag_trading_days,
         "quotes_rows": int(len(quotes_df)),
         "features_rows": int(len(features_df)),
         "candidates_rows": int(len(candidates_df)),
@@ -696,6 +804,10 @@ def main(argv: list[str] | None = None) -> int:
     _write_json(run_dir / "env.json", _collect_env())
     _write_json(run_dir / "diagnostics.json", diagnostics)
     bars_df.to_parquet(run_dir / "bars_snapshot.parquet", index=False)
+    if universe_source == "futu_filter":
+        _write_json(run_dir / "filter_request.json", filter_request_payload)
+        filter_results_df.to_csv(run_dir / "filter_results.csv", index=False)
+        _write_json(run_dir / "filter_meta.json", diagnostics.get("universe_filter", {}))
 
     candidates_df.to_csv(run_dir / "candidates.csv", index=False)
     symbol_fetch_results_df.to_csv(run_dir / "symbol_fetch_results.csv", index=False)

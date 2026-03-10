@@ -196,8 +196,14 @@ class UniverseConfig(BaseModel):
     higher priority when both are provided.
     """
 
+    mode: str = "futu_filter"
     watchlist_path: str | None = None
     rules_path: str | None = None
+    filter_spec_path: str = "data/input/futu_filter_spec.json"
+    filter_market: str = "HK"
+    filter_plate_code: str | None = None
+    filter_page_size: int = 200
+    max_filter_pages: int = 200
     prefer_watchlist: bool = True
 
 

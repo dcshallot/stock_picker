@@ -7,6 +7,7 @@ real OpenD calls is mostly localized to this module.
 from __future__ import annotations
 
 import importlib
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -168,6 +169,219 @@ class FutuConnector(BrokerConnector):
         }
         key = adjustment_map.get(str(adjustment).lower(), "QFQ")
         return getattr(getattr(futu_module, "AuType"), key)
+
+    def _map_market(self, futu_module: Any, market: str) -> Any:
+        key = str(market).strip().upper()
+        market_enum = getattr(futu_module, "Market")
+        if not hasattr(market_enum, key):
+            raise ValueError(f"Unsupported futu market: {market}")
+        return getattr(market_enum, key)
+
+    def _map_enum_value(self, futu_module: Any, enum_name: str, value: Any) -> Any:
+        enum_cls = getattr(futu_module, enum_name)
+        if value is None:
+            return None
+        if hasattr(enum_cls, str(value)):
+            return getattr(enum_cls, str(value))
+        key = str(value).strip().upper()
+        if hasattr(enum_cls, key):
+            return getattr(enum_cls, key)
+        return value
+
+    def _build_stock_filter_objects(self, futu_module: Any, filter_spec: dict[str, Any]) -> list[Any]:
+        filters = filter_spec.get("filters", [])
+        if not isinstance(filters, list) or not filters:
+            raise ValueError("filter_spec.filters must be a non-empty list.")
+
+        built: list[Any] = []
+        for item in filters:
+            if not isinstance(item, dict):
+                raise ValueError("Each filter item must be an object.")
+            filter_type = str(item.get("type", "")).strip().lower()
+
+            if filter_type == "simple":
+                obj = futu_module.SimpleFilter()
+                obj.stock_field = self._map_enum_value(futu_module, "StockField", item.get("stock_field"))
+                obj.filter_min = item.get("filter_min")
+                obj.filter_max = item.get("filter_max")
+                obj.is_no_filter = bool(item.get("is_no_filter", False))
+                if "sort" in item:
+                    obj.sort = self._map_enum_value(futu_module, "SortDir", item.get("sort"))
+                built.append(obj)
+                continue
+
+            if filter_type == "accumulate":
+                obj = futu_module.AccumulateFilter()
+                obj.stock_field = self._map_enum_value(futu_module, "StockField", item.get("stock_field"))
+                obj.filter_min = item.get("filter_min")
+                obj.filter_max = item.get("filter_max")
+                obj.days = int(item.get("days", 1))
+                obj.is_no_filter = bool(item.get("is_no_filter", False))
+                if "sort" in item:
+                    obj.sort = self._map_enum_value(futu_module, "SortDir", item.get("sort"))
+                built.append(obj)
+                continue
+
+            if filter_type == "financial":
+                obj = futu_module.FinancialFilter()
+                obj.stock_field = self._map_enum_value(futu_module, "StockField", item.get("stock_field"))
+                obj.filter_min = item.get("filter_min")
+                obj.filter_max = item.get("filter_max")
+                obj.quarter = self._map_enum_value(
+                    futu_module, "FinancialQuarter", item.get("quarter", "ANNUAL")
+                )
+                obj.is_no_filter = bool(item.get("is_no_filter", False))
+                if "sort" in item:
+                    obj.sort = self._map_enum_value(futu_module, "SortDir", item.get("sort"))
+                built.append(obj)
+                continue
+
+            if filter_type == "pattern":
+                obj = futu_module.PatternFilter()
+                obj.stock_field = self._map_enum_value(futu_module, "StockField", item.get("stock_field"))
+                obj.ktype = self._map_enum_value(futu_module, "KLType", item.get("ktype", "K_DAY"))
+                obj.is_no_filter = bool(item.get("is_no_filter", False))
+                if "consecutive_period" in item:
+                    obj.consecutive_period = int(item.get("consecutive_period", 0))
+                built.append(obj)
+                continue
+
+            if filter_type == "custom_indicator":
+                obj = futu_module.CustomIndicatorFilter()
+                obj.stock_field1 = self._map_enum_value(futu_module, "StockField", item.get("stock_field1"))
+                obj.stock_field2 = self._map_enum_value(futu_module, "StockField", item.get("stock_field2"))
+                obj.relative_position = self._map_enum_value(
+                    futu_module, "RelativePosition", item.get("relative_position")
+                )
+                obj.ktype = self._map_enum_value(futu_module, "KLType", item.get("ktype", "K_DAY"))
+                obj.value = item.get("value")
+                obj.is_no_filter = bool(item.get("is_no_filter", False))
+                obj.stock_field1_para = list(item.get("stock_field1_para", []))
+                obj.stock_field2_para = list(item.get("stock_field2_para", []))
+                if "consecutive_period" in item:
+                    obj.consecutive_period = int(item.get("consecutive_period", 0))
+                built.append(obj)
+                continue
+
+            raise ValueError(f"Unsupported filter type: {filter_type}")
+
+        return built
+
+    def _normalize_filter_request_payload(
+        self,
+        *,
+        market: str,
+        filter_spec: dict[str, Any],
+        plate_code: str | None,
+        page_size: int,
+        max_pages: int,
+    ) -> dict[str, Any]:
+        payload_filters = []
+        for item in filter_spec.get("filters", []):
+            payload_filters.append(dict(item) if isinstance(item, dict) else {"raw": str(item)})
+        return {
+            "name": str(filter_spec.get("name", "")),
+            "market": str(market).upper(),
+            "plate_code": str(plate_code or ""),
+            "page_size": int(page_size),
+            "max_pages": int(max_pages),
+            "filters": payload_filters,
+        }
+
+    def fetch_stock_filter(
+        self,
+        *,
+        market: str,
+        filter_spec: dict[str, Any],
+        plate_code: str | None = None,
+        page_size: int = 200,
+        max_pages: int = 200,
+    ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
+        """Fetch server-side stock filter results from Futu OpenAPI."""
+
+        self._validate_config()
+        futu_module = self._import_futu()
+        if futu_module is None:
+            raise RuntimeError("futu SDK is unavailable in the current runtime")
+
+        if not isinstance(filter_spec, dict):
+            raise ValueError("filter_spec must be dict.")
+
+        request_payload = self._normalize_filter_request_payload(
+            market=market,
+            filter_spec=filter_spec,
+            plate_code=plate_code,
+            page_size=page_size,
+            max_pages=max_pages,
+        )
+        filters = self._build_stock_filter_objects(futu_module, filter_spec)
+        market_enum = self._map_market(futu_module, market)
+
+        page_size = max(1, min(int(page_size or 200), 200))
+        max_pages = max(1, int(max_pages or 200))
+        rows: list[dict[str, Any]] = []
+        begin = 0
+        pages_fetched = 0
+        all_count = 0
+        last_page = False
+        truncated = False
+        started = time.time()
+
+        quote_ctx = futu_module.OpenQuoteContext(
+            host=self.config["host"],
+            port=self.config["port"],
+        )
+        try:
+            while pages_fetched < max_pages:
+                pages_fetched += 1
+                ret, data = quote_ctx.get_stock_filter(
+                    market=market_enum,
+                    filter_list=filters,
+                    plate_code=plate_code,
+                    begin=begin,
+                    num=page_size,
+                )
+                if ret != getattr(futu_module, "RET_OK"):
+                    raise self._map_futu_error(data)
+                if not isinstance(data, tuple) or len(data) != 3:
+                    raise RuntimeError(f"Unexpected get_stock_filter response: {data!r}")
+
+                last_page, all_count, result_items = data
+                result_items = result_items or []
+
+                for item in result_items:
+                    rows.append(
+                        {
+                            "code": str(getattr(item, "stock_code", "")),
+                            "name": str(getattr(item, "stock_name", "")),
+                        }
+                    )
+
+                if bool(last_page):
+                    break
+                if not result_items:
+                    break
+                begin += len(result_items)
+
+            if not bool(last_page):
+                truncated = True
+        finally:
+            quote_ctx.close()
+
+        elapsed_ms = int((time.time() - started) * 1000)
+        out_df = pd.DataFrame(rows, columns=["code", "name"])
+        if not out_df.empty:
+            out_df = out_df.drop_duplicates(subset=["code"], keep="first").reset_index(drop=True)
+
+        meta = {
+            "pages_fetched": pages_fetched,
+            "all_count": int(all_count or 0),
+            "last_page": bool(last_page),
+            "truncated": truncated,
+            "elapsed_ms": elapsed_ms,
+        }
+        self.last_fetch_notes["stock_filter"] = meta
+        return out_df, request_payload, meta
 
     @staticmethod
     def _normalize_history_kline_quota_data(data: Any) -> dict[str, Any]:

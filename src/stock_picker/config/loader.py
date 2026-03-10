@@ -79,6 +79,10 @@ def apply_cli_overrides(
     *,
     watchlist_path: str | None = None,
     rules_path: str | None = None,
+    universe_mode: str | None = None,
+    filter_spec_path: str | None = None,
+    filter_market: str | None = None,
+    filter_plate_code: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     out_dir: str | None = None,
@@ -91,6 +95,14 @@ def apply_cli_overrides(
         data.setdefault("universe", {})["watchlist_path"] = watchlist_path
     if rules_path:
         data.setdefault("universe", {})["rules_path"] = rules_path
+    if universe_mode:
+        data.setdefault("universe", {})["mode"] = universe_mode
+    if filter_spec_path:
+        data.setdefault("universe", {})["filter_spec_path"] = filter_spec_path
+    if filter_market:
+        data.setdefault("universe", {})["filter_market"] = filter_market
+    if filter_plate_code is not None:
+        data.setdefault("universe", {})["filter_plate_code"] = filter_plate_code
     if start_date:
         data.setdefault("run", {})["start_date"] = start_date
     if end_date:
